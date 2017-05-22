@@ -21,21 +21,29 @@ from draw import *
   jdyrlandweaver
   ==================== """
 
+name = "DEFAULT"
+
 def first_pass(commands ):
-    basename = "DEFAULT"
-    num_frames = 0
+    global name
+    b = False
+    f = False
+    v = False 
+    num_frames = 1
     for c in commands:
         if c[0] == 'basename':
-            basename = c[1]
+            name = c[1]
+            b = True
         elif c[0] == 'frames':
-            if len([x for x in commands if x[0] == 'basename'])== 0:
-                print "Name is \"DEFAULT\""
-            num_frames = int(c[1])
+            num_frames = c[1]
+            f = True
         elif c[0] == 'vary':
-            if len([x for x in commands if x[0] == 'frames']) == 0:
-                print "No frames while using 'vary' >> Exiting."
-                return (True, basename, num_frames)
-    return (False, basename, num_frames)
+            v = True
+    if (not f) and v:
+        print "NO FRAMES.. EXITING"
+        sys.exit()
+    if (not b) and f:
+        print "USING \"DEFAULT\" as basename, because no other name specified"
+    return num_frames
 
 
 """======== second_pass( commands ) ==========
@@ -57,30 +65,28 @@ def first_pass(commands ):
   ===================="""
 def second_pass( commands, num_frames ):
     knobs = []
-    i = 0
-    while i < num_frames:
+    for i in range(num_frames):
         knobs.append({})
-        i+=1
 
-    i = 0
-    for c in commands[0]:
+    for c in commands:
         if c[0] == "vary":
-            for i in range (int(c[2]), int(c[3])+1):
-                if float(c[5]) > float(c[4]):
-                    knobs[i][c[1]] = float(c[5]-c[4])/(int(c[3])-int(c[2])+1)*(i-int(c[2]) +1)
-                else:
-                    knobs[i][c[1]] = float(c[4]) - float(c[4]-c[5])/(int(c[3]) - int(c[2]) + 1)*(i - int(c[2]) + 1)
+            
+            if c[4] < 0 or c[5] > num_frames:
+                print "ERROR: IMPOSSIBLE VARY RANGE"
+                sys.exit()
+
+            i = 1.0*(c[5] - c[4])/(c[3] - c[2] + 1)
+            j = c[4]
+            for i in range(c[2], c[3] + 1):
+                knobs[i][c[1]] = j
+                j += i
     return knobs
 
 def run(filename):
     """
     This function runs an mdl script
     """
-    basename = -1
-    num_frames = -1
     color = [255, 255, 255]
-    tmp = new_matrix()
-    ident( tmp )
 
     p = mdl.parseFile(filename)
 
@@ -89,20 +95,21 @@ def run(filename):
     else:
         print "Parsing failed."
         return  
-    if first_pass(commands)[0]:
-        return
-    basename = first_pass(commands)[1]
-    num_frames = first_pass(commands)[2]
-    if not num_frames > 1:
-        num_frames = 1
-    second = second_pass(p, num_frames)
+    
+    num_frames = first_pass(commands)
+    if num_frames > 1:
+        knobs = second_pass(commands, num_frames)
 
-    ident(tmp)
-    stack = [ [x[:] for x in tmp] ]
-    screen = new_screen()
-    tmp = []
-    step = 0.1
+
+
     for frame in xrange(num_frames):
+        tmp = new_matrix()
+        ident(tmp)
+        stack = [ [x[:] for x in tmp] ]
+        tmp = []
+        screen = new_screen()
+        step = 0.1
+        knob = 1
         for command in commands:
             print command
             c = command[0]
@@ -128,17 +135,29 @@ def run(filename):
                 draw_polygons(tmp, screen, color)
                 tmp = []
             elif c == 'move':
-                tmp = make_translate(args[0], args[1], args[2])
+                if num_frames > 1 and args[3] != None:
+                    foo = args[3]
+                    knob = knobs[frame][foo]
+
+                tmp = make_translate(args[0]*knob, args[1]*knob, args[2]*knob)
                 matrix_mult(stack[-1], tmp)
                 stack[-1] = [x[:] for x in tmp]
                 tmp = []
             elif c == 'scale':
-                tmp = make_scale(args[0], args[1], args[2])
+                if num_frames > 1 and args[3] != None:
+                    foo = args[3]
+                    knob = knobs[frame][foo]
+                
+                tmp = make_scale(args[0]*knob, args[1]*knob, args[2]*knob)
                 matrix_mult(stack[-1], tmp)
                 stack[-1] = [x[:] for x in tmp]
                 tmp = []
             elif c == 'rotate':
-                theta = args[1] * (math.pi/180)
+                if num_frames > 1 and args[2] != None:
+                    foo = args[2]
+                    knob = knobs[frame][foo]
+                
+                theta = args[1] * (math.pi/180) * knob
                 if args[0] == 'x':
                     tmp = make_rotX(theta)
                 elif args[0] == 'y':
@@ -156,9 +175,6 @@ def run(filename):
                 display(screen)
             elif c == 'save':
                 save_extension(screen, args[0])
-        if num_frames > 1:
-            save_extension(screen, "anim/" + basename + "%03d.png"%frame)
-            clear_screen(screen)
-            stack.pop()
-    if num_frames > 1:
-        make_animation(basename)
+            if num_frames > 1:
+                save_extension(screen, "anim/" + name + "%03d.png"%frame)
+
